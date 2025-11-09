@@ -50,6 +50,23 @@ Variables opcionales:
 - `FOOTBALL_DATA_START_YEAR`: primer año de la serie histórica (por defecto `1993`).
 - `FOOTBALL_DATA_PARTITIONS`: número de particiones Spark para paralelizar las descargas.
 
+## ¿Cómo probar todo?
+
+1. **Verificar dependencias**: ejecuta `python -m compileall football_data_scraper.py` para asegurarte de que no
+   existan errores de sintaxis.
+2. **Ejecutar el job**: corre `spark-submit football_data_scraper.py` (o `spark-submit --conf ...` si necesitas
+   ajustar parámetros). El job descargará todas las temporadas disponibles y mostrará en consola un resumen de
+   descargas exitosas.
+3. **Comprobar los resultados**: revisa el directorio `data/raw/football-data` (o el que hayas configurado) y
+   confirma que existan subcarpetas por liga con los CSV de cada temporada. Por ejemplo:
+
+   ```bash
+   ls data/raw/football-data/spain_la_liga | head
+   ```
+
+4. **Repetir en modo limpio** (opcional): elimina la carpeta de salida y vuelve a ejecutar el script para confirmar
+   que la ingesta es reproducible y sobrescribe los datos cada vez.
+
 ## Programación diaria a las 5 AM
 
 1. Sube el contenido de este repositorio a un bucket de GCS o S3.
