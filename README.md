@@ -1,106 +1,121 @@
-# Football Data Scraper and API
+# Football Data Scraper
 
-Este proyecto proporciona una API para extraer, procesar y almacenar datos de partidos de fútbol de varias ligas europeas utilizando datos de [football-data.co.uk](https://www.football-data.co.uk). La API está construida con FastAPI y utiliza SQLAlchemy para manejar la base de datos.
+Este repositorio contiene un único job de PySpark que descarga diariamente los CSV
+de [football-data.co.uk](https://www.football-data.co.uk) para las ligas inglesa (1.ª y
+2.ª división), española, italiana, francesa, alemana, holandesa y portuguesa. Cada
+ejecución recrea los archivos para todas las temporadas disponibles, por lo que se
+puede programar sin preocuparse por acumulaciones de datos antiguos.
 
-## Características
+## Estructura de directorios de salida
 
-- Scrapeo de datos de fútbol desde diversas ligas y temporadas.
-- Almacenamiento de datos en una base de datos relacional.
-- Endpoints para crear, leer y consultar datos de partidos.
-- Despliegue en Google Cloud Platform (GCP) utilizando Docker y Cloud Build.
-- Uso de Google Cloud Secrets para gestionar credenciales de manera segura.
+```
+data/
+  raw/
+    football-data/
+      england_premier_league/
+        9394.csv
+        ...
+      spain_la_liga/
+        9394.csv
+        ...
+```
 
-## Tecnologías
-
-- **Backend**: FastAPI
-- **Base de datos**: SQLAlchemy con PostgreSQL
-- **Scraping**: Requests, Pandas
-- **Despliegue**: Docker, Google Cloud Platform (GCP), Cloud Build
+Los archivos se guardan en `data/raw/football-data/<liga>/<temporada>.csv` por
+defecto. Puedes cambiar la ruta con la variable de entorno `FOOTBALL_DATA_OUTPUT_DIR`.
 
 ## Requisitos
 
 - Python 3.10+
-- Docker
-- Google Cloud SDK (si vas a desplegar en GCP)
-- PostgreSQL (local o en GCP)
+- PySpark 3.5 (se instala automáticamente desde `requirements.txt`)
+- Java Runtime (requerido por PySpark)
+- SDK de Google Cloud configurado con Application Default Credentials (para subir a GCS)
 
-## Instalación
+## Instalación rápida
 
-1. Clona el repositorio:
+```bash
+python -m venv .venv
+source .venv/bin/activate  # En Windows usa .venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+## Ejecución local
+
+```bash
+# Dentro del entorno virtual
+spark-submit football_data_scraper.py
+```
+
+Variables opcionales:
+
+- `FOOTBALL_DATA_OUTPUT_DIR`: carpeta de destino para los CSV (por defecto `data/raw/football-data`).
+- `FOOTBALL_DATA_START_YEAR`: primer año de la serie histórica (por defecto `1993`).
+- `FOOTBALL_DATA_PARTITIONS`: número de particiones Spark para paralelizar las descargas.
+- `FOOTBALL_DATA_GCS_BUCKET`: nombre del bucket de Cloud Storage donde se copiarán los CSV.
+- `FOOTBALL_DATA_GCS_PREFIX`: prefijo dentro del bucket (por defecto `lakehouse/football-data`).
+
+## Carga automática al Lakehouse en GCP
+
+Cuando la variable `FOOTBALL_DATA_GCS_BUCKET` está configurada, cada descarga exitosa se sube
+automáticamente a Cloud Storage siguiendo la misma estructura de carpetas. Pasos sugeridos:
+
+1. **Crear el bucket (una sola vez)**:
+
    ```bash
-   git clone https://github.com/tu_usuario/football-data-scraper.git
-   cd football-data-scraper
+   gcloud storage buckets create gs://mi-bucket-lakehouse --location=EU
    ```
 
-2. Crea un entorno virtual e instala las dependencias:
+2. **Configurar credenciales**: asegúrate de que el job tenga credenciales con permisos
+   `roles/storage.objectAdmin` sobre el bucket. En local puedes usar Application Default
+   Credentials:
+
    ```bash
-   python3 -m venv venv
-   source venv/bin/activate  # En Windows, usa venv\Scripts\activate
-   pip install -r requirements.txt
+   gcloud auth application-default login
    ```
 
-3. Configura las variables de entorno:
-   - Crea un archivo `.env` en la raíz del proyecto con las siguientes variables:
-     ```
-     DB_USER=tu_usuario
-     DB_PASSWORD=tu_contraseña
-     DB_HOST=tu_host
-     DB_NAME=tu_nombre_bd
-     GOOGLE_CLOUD_PROJECT=tu_project_id_gcp
-     ```
+3. **Definir variables de entorno antes de ejecutar**:
 
-## Uso
-
-### Localmente
-
-1. Inicia el servidor de desarrollo:
    ```bash
-   uvicorn main:app --reload
+   export FOOTBALL_DATA_GCS_BUCKET="mi-bucket-lakehouse"
+   export FOOTBALL_DATA_GCS_PREFIX="lakehouse/football-data"
+   spark-submit football_data_scraper.py
    ```
 
-2. Accede a la documentación interactiva de la API en tu navegador:
-   ```
-   http://127.0.0.1:8000/docs
-   ```
+4. **Verificar en Cloud Storage**:
 
-### Despliegue en GCP
-
-1. Construye y despliega la imagen Docker utilizando Google Cloud Build:
    ```bash
-   gcloud builds submit --tag gcr.io/tu_project_id_gcp/football-data-scraper
+   gcloud storage ls gs://mi-bucket-lakehouse/lakehouse/football-data/spain_la_liga/
    ```
 
-2. Despliega el contenedor en Google Cloud Run:
+Estos archivos pueden conectarse a BigQuery mediante BigLake o a cualquier otro motor
+de lakehouse compatible con Cloud Storage.
+
+## ¿Cómo probar todo?
+
+1. **Verificar dependencias**: ejecuta `python -m compileall football_data_scraper.py` para asegurarte de que no
+   existan errores de sintaxis.
+2. **Ejecutar el job**: corre `spark-submit football_data_scraper.py` (o `spark-submit --conf ...` si necesitas
+   ajustar parámetros). El job descargará todas las temporadas disponibles y mostrará en consola un resumen de
+   descargas exitosas.
+3. **Comprobar los resultados**: revisa el directorio `data/raw/football-data` (o el que hayas configurado) y
+   confirma que existan subcarpetas por liga con los CSV de cada temporada. Por ejemplo:
+
    ```bash
-   gcloud run deploy football-data-scraper \
-     --image gcr.io/tu_project_id_gcp/football-data-scraper \
-     --platform managed \
-     --region us-central1 \
-     --allow-unauthenticated
+   ls data/raw/football-data/spain_la_liga | head
    ```
 
-### Endpoints Disponibles
+4. **Repetir en modo limpio** (opcional): elimina la carpeta de salida y vuelve a ejecutar el script para confirmar
+   que la ingesta es reproducible y sobrescribe los datos cada vez.
 
-- `POST /scrape-all-seasons/`: Scrapea y guarda los datos de todas las temporadas y ligas configuradas.
-- `POST /matches/`: Crea un nuevo partido en la base de datos.
-- `GET /matches/`: Recupera una lista de partidos.
-- `GET /matches/{match_id}`: Recupera los detalles de un partido específico por ID.
+## Programación diaria a las 5 AM
 
-## Gestión de Secretos con GCP
+1. Sube el contenido de este repositorio a un bucket de GCS.
+2. Crea un job serverless de PySpark (por ejemplo, Dataproc Serverless) cuyo
+   entrypoint sea `football_data_scraper.py` (la función `spark_main` también está
+   disponible si el servicio la requiere).
+3. Asigna a la cuenta de servicio permisos `roles/storage.objectAdmin` sobre el bucket
+   donde se almacenarán los datos.
+4. Programa la ejecución diaria a las 05:00 con Cloud Scheduler u orquestador equivalente
+   pasando las variables de entorno anteriores.
 
-Este proyecto utiliza Google Cloud Secrets Manager para manejar credenciales sensibles como las de la base de datos. Asegúrate de que las credenciales estén correctamente almacenadas en GCP y configuradas en el proyecto.
-
-## Contribuciones
-
-Las contribuciones son bienvenidas. Por favor, sigue los siguientes pasos:
-
-1. Haz un fork del repositorio.
-2. Crea una nueva rama (`git checkout -b feature/nueva_caracteristica`).
-3. Realiza tus cambios y haz commit (`git commit -m 'Agrega nueva característica'`).
-4. Envía los cambios a la rama (`git push origin feature/nueva_caracteristica`).
-5. Abre un Pull Request.
-
-## Licencia
-
-Este proyecto está bajo la Licencia MIT. Consulta el archivo [LICENSE](LICENSE) para más detalles.
-
+Cada ejecución sobrescribe los archivos existentes, manteniendo el dataset actualizado
+sin pasos adicionales.
