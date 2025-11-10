@@ -19,6 +19,8 @@ BASE_URL = "https://www.football-data.co.uk/mmz4281/{season}/{league_code}.csv"
 DEFAULT_OUTPUT_DIR = Path(os.getenv("FOOTBALL_DATA_OUTPUT_DIR", "data/raw/football-data"))
 DEFAULT_START_YEAR = int(os.getenv("FOOTBALL_DATA_START_YEAR", "1993"))
 DEFAULT_PARTITIONS = int(os.getenv("FOOTBALL_DATA_PARTITIONS", "24"))
+DEFAULT_GCS_BUCKET = os.getenv("FOOTBALL_DATA_GCS_BUCKET")
+DEFAULT_GCS_PREFIX = os.getenv("FOOTBALL_DATA_GCS_PREFIX", "lakehouse/football-data")
 
 LEAGUE_CODES = {
     "E0": "england_premier_league",
@@ -37,7 +39,7 @@ LEAGUE_CODES = {
 
 
 Task = Tuple[str, str, str]
-Result = Tuple[str, str, bool, str]
+Result = Tuple[str, str, str, bool, str]
 
 
 def build_season_codes(start_year: int, end_year: int | None = None) -> List[str]:
@@ -80,20 +82,81 @@ def download_csv(task: Task) -> Result:
     except Exception as exc:  # noqa: BLE001
         message = f"Error downloading {league_code} season {season}: {exc}"
         LOGGER.error(message)
-        return season, league_code, False, message
+        return season, league_code, output_path_str, False, message
 
     if response.status_code == 200 and response.content.strip():
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_bytes(response.content)
         message = f"Downloaded {league_code} season {season}"
         LOGGER.info(message)
-        return season, league_code, True, message
+        return season, league_code, output_path_str, True, message
 
     message = (
         f"Missing data for {league_code} season {season}: HTTP {response.status_code}"
     )
     LOGGER.warning(message)
-    return season, league_code, False, message
+    return season, league_code, output_path_str, False, message
+
+
+def upload_successful_results_to_gcs(
+    results: Sequence[Result],
+    output_dir: Path,
+    *,
+    bucket_name: str,
+    prefix: str | None = None,
+) -> None:
+    """Upload downloaded CSVs to Google Cloud Storage."""
+
+    try:
+        from google.cloud import storage
+    except ModuleNotFoundError as exc:  # pragma: no cover - guard for optional dep
+        msg = "google-cloud-storage must be installed to enable GCS uploads"
+        raise RuntimeError(msg) from exc
+
+    client = storage.Client()
+
+    normalized_prefix = (prefix or "").strip("/")
+    output_dir = output_dir.resolve()
+    bucket = client.bucket(bucket_name)
+
+    for season, league_code, output_path_str, ok, _ in results:
+        if not ok:
+            continue
+
+        local_path = Path(output_path_str)
+
+        try:
+            relative_path = local_path.resolve().relative_to(output_dir)
+            blob_name = (
+                f"{normalized_prefix}/{relative_path.as_posix()}"
+                if normalized_prefix
+                else relative_path.as_posix()
+            )
+        except ValueError:
+            # Fallback in the unlikely event the file is outside output_dir.
+            blob_name = (
+                f"{normalized_prefix}/{local_path.name}" if normalized_prefix else local_path.name
+            )
+
+        try:
+            blob = bucket.blob(blob_name)
+            blob.upload_from_filename(local_path)
+            LOGGER.info(
+                "Uploaded %s season %s to gs://%s/%s",
+                league_code,
+                season,
+                bucket_name,
+                blob_name,
+            )
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.error(
+                "Failed to upload %s season %s to gs://%s/%s: %s",
+                league_code,
+                season,
+                bucket_name,
+                blob_name,
+                exc,
+            )
 
 
 def run_scraper(
@@ -101,6 +164,8 @@ def run_scraper(
     output_dir: Path = DEFAULT_OUTPUT_DIR,
     start_year: int = DEFAULT_START_YEAR,
     partitions: int = DEFAULT_PARTITIONS,
+    gcs_bucket: str | None = DEFAULT_GCS_BUCKET,
+    gcs_prefix: str | None = DEFAULT_GCS_PREFIX,
 ) -> None:
     """Execute the download job inside a Spark session."""
 
@@ -121,8 +186,21 @@ def run_scraper(
     finally:
         spark.stop()
 
-    successes = sum(1 for _, _, ok, _ in results if ok)
+    successes = sum(1 for *_, ok, _ in results if ok)
     LOGGER.info("Finished downloads: %d successful of %d", successes, len(results))
+
+    if gcs_bucket:
+        LOGGER.info(
+            "Uploading successful downloads to gs://%s with prefix '%s'",
+            gcs_bucket,
+            gcs_prefix,
+        )
+        upload_successful_results_to_gcs(
+            results,
+            output_dir=output_dir,
+            bucket_name=gcs_bucket,
+            prefix=gcs_prefix,
+        )
 
 
 def spark_main() -> None:

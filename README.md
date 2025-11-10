@@ -28,6 +28,7 @@ defecto. Puedes cambiar la ruta con la variable de entorno `FOOTBALL_DATA_OUTPUT
 - Python 3.10+
 - PySpark 3.5 (se instala automáticamente desde `requirements.txt`)
 - Java Runtime (requerido por PySpark)
+- SDK de Google Cloud configurado con Application Default Credentials (para subir a GCS)
 
 ## Instalación rápida
 
@@ -49,6 +50,44 @@ Variables opcionales:
 - `FOOTBALL_DATA_OUTPUT_DIR`: carpeta de destino para los CSV (por defecto `data/raw/football-data`).
 - `FOOTBALL_DATA_START_YEAR`: primer año de la serie histórica (por defecto `1993`).
 - `FOOTBALL_DATA_PARTITIONS`: número de particiones Spark para paralelizar las descargas.
+- `FOOTBALL_DATA_GCS_BUCKET`: nombre del bucket de Cloud Storage donde se copiarán los CSV.
+- `FOOTBALL_DATA_GCS_PREFIX`: prefijo dentro del bucket (por defecto `lakehouse/football-data`).
+
+## Carga automática al Lakehouse en GCP
+
+Cuando la variable `FOOTBALL_DATA_GCS_BUCKET` está configurada, cada descarga exitosa se sube
+automáticamente a Cloud Storage siguiendo la misma estructura de carpetas. Pasos sugeridos:
+
+1. **Crear el bucket (una sola vez)**:
+
+   ```bash
+   gcloud storage buckets create gs://mi-bucket-lakehouse --location=EU
+   ```
+
+2. **Configurar credenciales**: asegúrate de que el job tenga credenciales con permisos
+   `roles/storage.objectAdmin` sobre el bucket. En local puedes usar Application Default
+   Credentials:
+
+   ```bash
+   gcloud auth application-default login
+   ```
+
+3. **Definir variables de entorno antes de ejecutar**:
+
+   ```bash
+   export FOOTBALL_DATA_GCS_BUCKET="mi-bucket-lakehouse"
+   export FOOTBALL_DATA_GCS_PREFIX="lakehouse/football-data"
+   spark-submit football_data_scraper.py
+   ```
+
+4. **Verificar en Cloud Storage**:
+
+   ```bash
+   gcloud storage ls gs://mi-bucket-lakehouse/lakehouse/football-data/spain_la_liga/
+   ```
+
+Estos archivos pueden conectarse a BigQuery mediante BigLake o a cualquier otro motor
+de lakehouse compatible con Cloud Storage.
 
 ## ¿Cómo probar todo?
 
@@ -69,12 +108,14 @@ Variables opcionales:
 
 ## Programación diaria a las 5 AM
 
-1. Sube el contenido de este repositorio a un bucket de GCS o S3.
-2. Crea un job serverless de PySpark (por ejemplo, Dataproc Serverless o AWS Glue) cuyo
+1. Sube el contenido de este repositorio a un bucket de GCS.
+2. Crea un job serverless de PySpark (por ejemplo, Dataproc Serverless) cuyo
    entrypoint sea `football_data_scraper.py` (la función `spark_main` también está
    disponible si el servicio la requiere).
-3. Programa la ejecución diaria a las 05:00 con Cloud Scheduler, EventBridge o el
-   servicio equivalente de tu proveedor.
+3. Asigna a la cuenta de servicio permisos `roles/storage.objectAdmin` sobre el bucket
+   donde se almacenarán los datos.
+4. Programa la ejecución diaria a las 05:00 con Cloud Scheduler u orquestador equivalente
+   pasando las variables de entorno anteriores.
 
 Cada ejecución sobrescribe los archivos existentes, manteniendo el dataset actualizado
 sin pasos adicionales.
