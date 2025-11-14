@@ -1,60 +1,50 @@
-"""PySpark job orchestration for downloading and uploading football data."""
-
-from __future__ import annotations
+"""Plain functions to run the PySpark downloads."""
 
 import logging
-from typing import Iterable, Optional, Sequence
+from typing import Mapping, Sequence
 
 from pyspark.sql import SparkSession
 
-from .config import ScraperConfig
-from .downloader import DownloadResult, DownloadTask, FootballDataDownloader
-from .uploader import GCSUploader
+from .downloader import build_download_tasks, download_csv
+from .uploader import upload_results_to_gcs
 
 LOGGER = logging.getLogger(__name__)
 
 
-class FootballDataSparkJob:
-    """Coordinate Spark execution for football-data downloads."""
+def run_spark_job(config: Mapping[str, object], seasons: Sequence[str]):
+    """Start Spark, download everything and maybe upload to GCS."""
 
-    def __init__(
-        self,
-        config: ScraperConfig,
-        downloader: FootballDataDownloader,
-        uploader: Optional[GCSUploader] = None,
-    ) -> None:
-        self._config = config
-        self._downloader = downloader
-        self._uploader = uploader
+    LOGGER.info("Iniciando job de football-data.co.uk")
+    tasks = build_download_tasks(config, seasons)
+    LOGGER.info("Se prepararon %d descargas", len(tasks))
 
-    def run(self, seasons: Sequence[str]) -> Sequence[DownloadResult]:
-        """Execute the Spark job for the provided season codes."""
+    base_url = str(config["base_url"])
+    partitions = int(config["partitions"])
 
-        LOGGER.info("Starting football-data.co.uk ingestion job")
-        tasks = self._downloader.build_tasks(seasons)
-        LOGGER.info("Prepared %d download tasks", len(tasks))
+    spark = (
+        SparkSession.builder.appName("football-data-scraper")
+        .config("spark.sql.execution.arrow.pyspark.enabled", "true")
+        .getOrCreate()
+    )
 
-        spark = (
-            SparkSession.builder.appName("football-data-scraper")
-            .config("spark.sql.execution.arrow.pyspark.enabled", "true")
-            .getOrCreate()
+    try:
+        rdd = spark.sparkContext.parallelize(tasks, numSlices=partitions)
+        results = rdd.map(lambda task: download_csv(task, base_url)).collect()
+    finally:
+        spark.stop()
+
+    successes = sum(1 for item in results if item.get("success"))
+    LOGGER.info("Descargas terminadas: %d exitosas de %d", successes, len(results))
+
+    bucket = config.get("gcs_bucket")
+    if bucket:
+        prefix = config.get("gcs_prefix")
+        LOGGER.info("Subiendo archivos a gs://%s con prefijo '%s'", bucket, prefix)
+        upload_results_to_gcs(
+            str(bucket),
+            None if prefix is None else str(prefix),
+            results,
+            base_dir=config["output_dir"],
         )
 
-        try:
-            rdd = spark.sparkContext.parallelize(tasks, numSlices=self._config.partitions)
-            results = rdd.map(self._downloader.download).collect()
-        finally:
-            spark.stop()
-
-        successes = sum(1 for result in results if result.success)
-        LOGGER.info("Finished downloads: %d successful of %d", successes, len(results))
-
-        if self._uploader:
-            LOGGER.info(
-                "Uploading successful downloads to gs://%s with prefix '%s'",
-                self._uploader._bucket_name,  # pragma: no cover - log helper
-                self._uploader._prefix,
-            )
-            self._uploader.upload(results, base_dir=self._config.output_dir)
-
-        return results
+    return results

@@ -1,86 +1,66 @@
-"""Download orchestration for football-data CSVs."""
-
-from __future__ import annotations
+"""Tiny download helpers with plain dictionaries to keep things simple."""
 
 import logging
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Mapping, Sequence
+from typing import Dict, Iterable, List, Mapping, Sequence
 
 import requests
 
-from .config import ScraperConfig
+from .config import resolve_league_dir
 
 LOGGER = logging.getLogger(__name__)
 
-
-@dataclass(frozen=True)
-class DownloadTask:
-    """Descriptor for a single CSV download."""
-
-    season: str
-    league_code: str
-    output_path: Path
-
-    def build_url(self, base_url: str) -> str:
-        return base_url.format(season=self.season, league_code=self.league_code)
+DownloadTask = Dict[str, object]
+DownloadResult = Dict[str, object]
 
 
-@dataclass(frozen=True)
-class DownloadResult:
-    """Result of a download attempt."""
+def build_download_tasks(config: Mapping[str, object], seasons: Sequence[str]) -> List[DownloadTask]:
+    """Create the combinations of league and season we want to fetch."""
 
-    task: DownloadTask
-    success: bool
-    message: str
+    tasks: List[DownloadTask] = []
+    for league_code in config["league_codes"]:  # type: ignore[index]
+        league_dir = resolve_league_dir(config, league_code)
+        for season in seasons:
+            tasks.append(
+                {
+                    "season": season,
+                    "league_code": league_code,
+                    "output_path": Path(league_dir) / f"{season}.csv",
+                }
+            )
+    return tasks
 
 
-class FootballDataDownloader:
-    """Create download tasks and fetch remote CSVs."""
+def download_csv(task: DownloadTask, base_url: str) -> DownloadResult:
+    """Download a single CSV file."""
 
-    def __init__(self, config: ScraperConfig) -> None:
-        self._config = config
+    season = task["season"]
+    league_code = task["league_code"]
+    output_path: Path = Path(task["output_path"])  # type: ignore[arg-type]
+    url = base_url.format(season=season, league_code=league_code)
 
-    def build_tasks(self, seasons: Sequence[str]) -> List[DownloadTask]:
-        tasks: List[DownloadTask] = []
-        for league_code in self._config.league_codes:
-            league_dir = self._config.resolve_league_dir(league_code)
-            for season in seasons:
-                tasks.append(
-                    DownloadTask(
-                        season=season,
-                        league_code=league_code,
-                        output_path=league_dir / f"{season}.csv",
-                    )
-                )
-        return tasks
+    try:
+        response = requests.get(url, timeout=30)
+    except Exception as exc:  # noqa: BLE001 - keep it easy to read
+        message = f"Error al bajar {league_code} temporada {season}: {exc}"
+        LOGGER.error(message)
+        return {"task": task, "success": False, "message": message}
 
-    def download(self, task: DownloadTask) -> DownloadResult:
-        url = task.build_url(self._config.base_url)
-        try:
-            response = requests.get(url, timeout=30)
-        except Exception as exc:  # noqa: BLE001
-            message = f"Error downloading {task.league_code} season {task.season}: {exc}"
-            LOGGER.error(message)
-            return DownloadResult(task=task, success=False, message=message)
+    if response.status_code == 200 and response.content.strip():
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(response.content)
+        message = f"Descarga OK {league_code} temporada {season}"
+        LOGGER.info(message)
+        return {"task": task, "success": True, "message": message}
 
-        if response.status_code == 200 and response.content.strip():
-            task.output_path.parent.mkdir(parents=True, exist_ok=True)
-            task.output_path.write_bytes(response.content)
-            message = f"Downloaded {task.league_code} season {task.season}"
-            LOGGER.info(message)
-            return DownloadResult(task=task, success=True, message=message)
+    message = f"No hay datos para {league_code} temporada {season}: HTTP {response.status_code}"
+    LOGGER.warning(message)
+    return {"task": task, "success": False, "message": message}
 
-        message = (
-            f"Missing data for {task.league_code} season {task.season}: HTTP {response.status_code}"
-        )
-        LOGGER.warning(message)
-        return DownloadResult(task=task, success=False, message=message)
 
-    @staticmethod
-    def summarize(results: Iterable[DownloadResult]) -> tuple[int, int]:
-        """Return (successes, total) counts for results."""
+def summarize_results(results: Iterable[DownloadResult]) -> tuple[int, int]:
+    """Count how many downloads worked."""
 
-        results_list = list(results)
-        successes = sum(1 for result in results_list if result.success)
-        return successes, len(results_list)
+    results_list = list(results)
+    successes = sum(1 for item in results_list if item.get("success"))
+    return successes, len(results_list)

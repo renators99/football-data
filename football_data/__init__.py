@@ -1,15 +1,3 @@
-"""Football-data.co.uk scraping package."""
+"""Small helpers for the football-data.co.uk scraper."""
 
-from .config import ScraperConfig
-from .downloader import DownloadResult, DownloadTask, FootballDataDownloader
-from .spark_job import FootballDataSparkJob
-from .uploader import GCSUploader
-
-__all__ = [
-    "ScraperConfig",
-    "DownloadResult",
-    "DownloadTask",
-    "FootballDataDownloader",
-    "FootballDataSparkJob",
-    "GCSUploader",
-]
+__all__ = []

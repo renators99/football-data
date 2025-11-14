@@ -1,47 +1,41 @@
-"""Entrypoint for the football-data.co.uk PySpark scraper job."""
-
-from __future__ import annotations
+"""Script principal muy sencillo para bajar los CSV de football-data.co.uk."""
 
 import logging
-from typing import Optional, Sequence
+from typing import Dict, Iterable, Optional, Sequence
 
-from football_data.config import ScraperConfig
-from football_data.downloader import FootballDataDownloader
-from football_data.seasons import SeasonCodeGenerator
-from football_data.spark_job import FootballDataSparkJob
-from football_data.uploader import GCSUploader
+from football_data.config import DEFAULT_START_YEAR, load_config_from_env
+from football_data.seasons import build_season_list
+from football_data.spark_job import run_spark_job
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 LOGGER = logging.getLogger(__name__)
 
 
-def build_job(config: Optional[ScraperConfig] = None) -> FootballDataSparkJob:
-    """Create a job instance using configuration from the environment by default."""
+def choose_seasons(start_year: int, *, end_year: Optional[int] = None) -> Sequence[str]:
+    return build_season_list(start_year, end_year=end_year)
 
-    config = config or ScraperConfig.from_env()
-    downloader = FootballDataDownloader(config)
-    uploader = None
-    if config.gcs_bucket:
-        uploader = GCSUploader(config.gcs_bucket, config.gcs_prefix)
-    return FootballDataSparkJob(config=config, downloader=downloader, uploader=uploader)
+
+def build_config(extra_values: Optional[Dict[str, object]] = None) -> Dict[str, object]:
+    config = load_config_from_env()
+    if extra_values:
+        config.update(extra_values)
+    return config
 
 
 def run_scraper(
     *,
-    config: Optional[ScraperConfig] = None,
-    seasons: Optional[Sequence[str]] = None,
+    config: Optional[Dict[str, object]] = None,
+    seasons: Optional[Iterable[str]] = None,
 ) -> None:
-    """Execute the football-data download job."""
+    """Run the PySpark downloads with a very small wrapper."""
 
-    config = config or ScraperConfig.from_env()
-    season_generator = SeasonCodeGenerator(start_year=config.start_year)
-    resolved_seasons = list(seasons or season_generator.generate())
-    job = build_job(config)
-    job.run(resolved_seasons)
+    config = config or build_config()
+    chosen_seasons = list(seasons or choose_seasons(int(config.get("start_year", DEFAULT_START_YEAR))))
+    run_spark_job(config, chosen_seasons)
 
 
 def spark_main() -> None:
-    """Entrypoint used by serverless PySpark runners."""
+    """Entry point for serverless runners."""
 
     run_scraper()
 

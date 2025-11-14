@@ -9,21 +9,22 @@ que puedes programarlo sin preocuparte por acumulaciones de ejecuciones previas.
 
 ## Arquitectura del código
 
-El scraper está dividido en clases reutilizables que facilitan su mantenimiento y
-extensión:
+Todo el código se organizó con funciones muy directas para mantenerlo al nivel
+de un perfil junior. Las piezas principales son:
 
-- `football_data.config.ScraperConfig`: centraliza la lectura de variables de
-  entorno y resuelve rutas por liga.
-- `football_data.seasons.SeasonCodeGenerator`: genera los códigos de temporada
-  (`9394`, `2324`, etc.) a partir de un año inicial.
-- `football_data.downloader.FootballDataDownloader`: construye tareas de descarga
-  y gestiona la obtención de cada CSV.
-- `football_data.uploader.GCSUploader`: copia los archivos descargados en un
-  bucket de Google Cloud Storage cuando está configurado.
-- `football_data.spark_job.FootballDataSparkJob`: coordina la ejecución en Spark
-  para paralelizar las descargas y, opcionalmente, la subida al lakehouse.
-- `football_data_scraper.run_scraper`: punto de entrada que ensambla los
-  componentes anteriores para ejecuciones locales o serverless.
+- `football_data.config.load_config_from_env`: reúne las variables de entorno en
+  un diccionario con valores por defecto.
+- `football_data.seasons.build_season_list`: arma los códigos de temporada
+  (`9394`, `2324`, etc.) según el año inicial que se indique.
+- `football_data.downloader.build_download_tasks` y
+  `football_data.downloader.download_csv`: crean las combinaciones de liga y
+  temporada y realizan cada descarga.
+- `football_data.uploader.upload_results_to_gcs`: opcionalmente sube los CSV
+  generados a un bucket de Google Cloud Storage.
+- `football_data.spark_job.run_spark_job`: arranca Spark, paraleliza las
+  descargas y llama a la subida a GCS cuando está activada.
+- `football_data_scraper.run_scraper`: punto de entrada muy sencillo que usa las
+  funciones anteriores.
 
 ## Estructura de directorios de salida
 
@@ -82,7 +83,7 @@ spark-submit football_data_scraper.py
 ```
 
 Puedes pasar variables de entorno antes del comando para personalizar el
-comportamiento. El job ensamblará las clases descritas en la sección de
+comportamiento. El script llamará a las funciones descritas en la sección de
 arquitectura y ejecutará la descarga completa.
 
 ## Carga automática al Lakehouse en GCP
