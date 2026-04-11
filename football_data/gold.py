@@ -1,89 +1,73 @@
-import logging
-from pathlib import Path
-from typing import Dict, Optional
+"""Build curated gold tables from the silver layer."""
 
-from pyspark.sql import SparkSession, DataFrame
+from pathlib import Path
+
+from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
 
-from .config import load_config_from_env
-from .silver import get_spark_session
-
-LOGGER = logging.getLogger(__name__)
+from .layers import gold_root
 
 
-def calculate_league_summary(matches: DataFrame) -> DataFrame:
-    """Calculate summary statistics per league and season."""
-    # matches schema: League, Season, Date, HomeTeam, AwayTeam, HomeGoals, AwayGoals, Result
-    
-    summary = matches.groupBy("League", "Season").agg(
-        F.count("*").alias("TotalMatches"),
-        F.sum(F.col("HomeGoals") + F.col("AwayGoals")).alias("TotalGoals"),
-        F.avg(F.col("HomeGoals") + F.col("AwayGoals")).alias("AvgGoalsPerGame"),
-        (F.sum(F.when(F.col("Result") == "H", 1).otherwise(0)) / F.count("*")).alias("HomeWinPct"),
-        (F.sum(F.when(F.col("Result") == "A", 1).otherwise(0)) / F.count("*")).alias("AwayWinPct"),
-        (F.sum(F.when(F.col("Result") == "D", 1).otherwise(0)) / F.count("*")).alias("DrawPct")
+def build_gold_team_table(silver_matches: DataFrame) -> DataFrame:
+    home_rows = (
+        silver_matches.select(
+            "league_code",
+            "season",
+            F.col("home_team").alias("team"),
+            F.when(F.col("full_time_result") == "H", 1).otherwise(0).alias("wins"),
+            F.when(F.col("full_time_result") == "D", 1).otherwise(0).alias("draws"),
+            F.when(F.col("full_time_result") == "A", 1).otherwise(0).alias("losses"),
+            F.col("full_time_home_goals").alias("goals_for"),
+            F.col("full_time_away_goals").alias("goals_against"),
+        )
     )
-    
-    return summary
 
-
-def calculate_team_history(standings: DataFrame) -> DataFrame:
-    """Calculate historical stats for teams across all seasons."""
-    # standings schema: League, Season, Team, Played, Points, Won, Drawn, Lost, GF, GA, GD
-    
-    history = standings.groupBy("Team").agg(
-        F.countDistinct("Season").alias("SeasonsPlayed"),
-        F.sum("Played").alias("TotalMatches"),
-        F.sum("Points").alias("TotalPoints"),
-        F.sum("Won").alias("TotalWins"),
-        F.sum("Drawn").alias("TotalDraws"),
-        F.sum("Lost").alias("TotalLosses"),
-        F.sum("GF").alias("TotalGF"),
-        F.sum("GA").alias("TotalGA"),
-        F.max("Points").alias("BestSeasonPoints")
+    away_rows = (
+        silver_matches.select(
+            "league_code",
+            "season",
+            F.col("away_team").alias("team"),
+            F.when(F.col("full_time_result") == "A", 1).otherwise(0).alias("wins"),
+            F.when(F.col("full_time_result") == "D", 1).otherwise(0).alias("draws"),
+            F.when(F.col("full_time_result") == "H", 1).otherwise(0).alias("losses"),
+            F.col("full_time_away_goals").alias("goals_for"),
+            F.col("full_time_home_goals").alias("goals_against"),
+        )
     )
-    
-    return history
+
+    return (
+        home_rows.unionByName(away_rows)
+        .groupBy("league_code", "season", "team")
+        .agg(
+            F.count(F.lit(1)).alias("matches_played"),
+            F.sum("wins").alias("wins"),
+            F.sum("draws").alias("draws"),
+            F.sum("losses").alias("losses"),
+            F.sum("goals_for").alias("goals_for"),
+            F.sum("goals_against").alias("goals_against"),
+        )
+        .withColumn("goal_difference", F.col("goals_for") - F.col("goals_against"))
+        .withColumn("points", F.col("wins") * 3 + F.col("draws"))
+    )
 
 
-def run_gold_layer(config: Optional[Dict[str, object]] = None) -> None:
-    """Main entry point for Gold layer processing."""
-    if config is None:
-        config = load_config_from_env()
-        
-    raw_dir = Path(config["output_dir"]) 
-    # data/raw -> data/silver -> data/gold
-    silver_dir = raw_dir.parent.parent / "silver"
-    gold_dir = raw_dir.parent.parent / "gold"
-    
-    LOGGER.info(f"Starting Gold layer processing. Silver: {silver_dir}, Gold: {gold_dir}")
-    
-    spark = get_spark_session()
-    
-    try:
-        matches_path = silver_dir / "matches"
-        standings_path = silver_dir / "standings"
-        
-        if not matches_path.exists() or not standings_path.exists():
-            LOGGER.warning("Silver layer data not found. Skipping Gold layer.")
-            return
+def build_gold_league_summary(silver_matches: DataFrame) -> DataFrame:
+    total_goals = F.col("full_time_home_goals") + F.col("full_time_away_goals")
+    return silver_matches.groupBy("league_code", "season").agg(
+        F.count(F.lit(1)).alias("matches"),
+        F.sum(F.when(F.col("full_time_result") == "H", 1).otherwise(0)).alias("home_wins"),
+        F.sum(F.when(F.col("full_time_result") == "D", 1).otherwise(0)).alias("draws"),
+        F.sum(F.when(F.col("full_time_result") == "A", 1).otherwise(0)).alias("away_wins"),
+        F.avg(total_goals).alias("avg_goals_per_match"),
+        F.sum(total_goals).alias("total_goals"),
+    )
 
-        matches = spark.read.parquet(str(matches_path))
-        standings = spark.read.parquet(str(standings_path))
-        
-        # 1. League Summary
-        league_summary = calculate_league_summary(matches)
-        league_summary_path = gold_dir / "league_summary"
-        LOGGER.info(f"Saving league summary to {league_summary_path}")
-        league_summary.write.mode("overwrite").parquet(str(league_summary_path))
-        
-        # 2. Team History
-        team_history = calculate_team_history(standings)
-        team_history_path = gold_dir / "team_history"
-        LOGGER.info(f"Saving team history to {team_history_path}")
-        team_history.write.mode("overwrite").parquet(str(team_history_path))
-        
-        LOGGER.info("Gold layer processing completed successfully.")
-        
-    finally:
-        spark.stop()
+
+def write_gold_layer(team_table: DataFrame, league_summary: DataFrame, output_dir: Path) -> tuple[Path, Path]:
+    root = gold_root(output_dir)
+    team_destination = root / "team_season_table"
+    summary_destination = root / "league_season_summary"
+
+    team_table.write.mode("overwrite").partitionBy("league_code", "season").parquet(str(team_destination))
+    league_summary.write.mode("overwrite").partitionBy("league_code", "season").parquet(str(summary_destination))
+    return team_destination, summary_destination
