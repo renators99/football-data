@@ -1,106 +1,93 @@
-# Football Data Scraper and API
+# Football Data Scraper (PySpark + Lakehouse)
 
-Este proyecto proporciona una API para extraer, procesar y almacenar datos de partidos de fútbol de varias ligas europeas utilizando datos de [football-data.co.uk](https://www.football-data.co.uk). La API está construida con FastAPI y utiliza SQLAlchemy para manejar la base de datos.
+Pipeline en Python/PySpark para descargar CSV de `football-data.co.uk` y construir capas **bronze, silver y gold** listas para data lake en local y en GCP.
 
-## Características
+## Ligas incluidas
 
-- Scrapeo de datos de fútbol desde diversas ligas y temporadas.
-- Almacenamiento de datos en una base de datos relacional.
-- Endpoints para crear, leer y consultar datos de partidos.
-- Despliegue en Google Cloud Platform (GCP) utilizando Docker y Cloud Build.
-- Uso de Google Cloud Secrets para gestionar credenciales de manera segura.
+- Inglaterra: `E0` (Premier League), `E1` (Championship)
+- España: `SP1` (La Liga), `SP2` (Segunda)
+- Italia: `I1`, `I2`
+- Francia: `F1`, `F2`
+- Alemania: `D1`, `D2`
+- Holanda: `N1`
+- Portugal: `P1`
 
-## Tecnologías
+## Estructura del proyecto (más dividida por librerías)
 
-- **Backend**: FastAPI
-- **Base de datos**: SQLAlchemy con PostgreSQL
-- **Scraping**: Requests, Pandas
-- **Despliegue**: Docker, Google Cloud Platform (GCP), Cloud Build
+- `football_data/config.py`: variables de entorno y configuración.
+- `football_data/seasons.py`: generación de temporadas (`9394`, `2425`, etc.).
+- `football_data/downloader.py`: armado de tareas y descarga de CSV (bronze).
+- `football_data/silver.py`: normalización a esquema de partidos.
+- `football_data/gold.py`: agregados de negocio (tabla por equipo y resumen de liga).
+- `football_data/layers.py`: rutas de capas del lakehouse.
+- `football_data/uploader.py`: subida del lakehouse completo a GCS.
+- `football_data/spark_job.py`: orquestación completa Spark.
+- `football_data_scraper.py`: entrypoint.
 
-## Requisitos
+## Capas Lakehouse
 
-- Python 3.10+
-- Docker
-- Google Cloud SDK (si vas a desplegar en GCP)
-- PostgreSQL (local o en GCP)
+Por defecto se escribe en `data/lakehouse`:
+
+```text
+data/lakehouse/
+  bronze/
+    football-data/
+      league_code=E0/league_name=england_premier_league/season=2324/data.csv
+  silver/
+    matches/
+      league_code=E0/season=2324/part-*.parquet
+  gold/
+    team_season_table/
+      league_code=E0/season=2324/part-*.parquet
+    league_season_summary/
+      league_code=E0/season=2324/part-*.parquet
+```
+
+## Variables de entorno
+
+- `FOOTBALL_DATA_OUTPUT_DIR` (default: `data/lakehouse`)
+- `FOOTBALL_DATA_START_YEAR` (default: `1993`)
+- `FOOTBALL_DATA_PARTITIONS` (default: `24`)
+- `FOOTBALL_DATA_GCS_BUCKET` (opcional)
+- `FOOTBALL_DATA_GCS_PREFIX` (default: `lakehouse`)
+- `FOOTBALL_DATA_LEAGUE_CODES` (opcional `CODIGO=nombre,CODIGO2=nombre2`)
 
 ## Instalación
 
-1. Clona el repositorio:
-   ```bash
-   git clone https://github.com/tu_usuario/football-data-scraper.git
-   cd football-data-scraper
-   ```
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
 
-2. Crea un entorno virtual e instala las dependencias:
-   ```bash
-   python3 -m venv venv
-   source venv/bin/activate  # En Windows, usa venv\Scripts\activate
-   pip install -r requirements.txt
-   ```
+## Ejecución
 
-3. Configura las variables de entorno:
-   - Crea un archivo `.env` en la raíz del proyecto con las siguientes variables:
-     ```
-     DB_USER=tu_usuario
-     DB_PASSWORD=tu_contraseña
-     DB_HOST=tu_host
-     DB_NAME=tu_nombre_bd
-     GOOGLE_CLOUD_PROJECT=tu_project_id_gcp
-     ```
+```bash
+spark-submit football_data_scraper.py
+```
 
-## Uso
+## Carga a GCP (lakehouse)
 
-### Localmente
+```bash
+export FOOTBALL_DATA_GCS_BUCKET="mi-bucket"
+export FOOTBALL_DATA_GCS_PREFIX="lakehouse"
+spark-submit football_data_scraper.py
+```
 
-1. Inicia el servidor de desarrollo:
-   ```bash
-   uvicorn main:app --reload
-   ```
+Con eso se suben archivos de bronze/silver/gold al bucket.
 
-2. Accede a la documentación interactiva de la API en tu navegador:
-   ```
-   http://127.0.0.1:8000/docs
-   ```
+## Prueba rápida
 
-### Despliegue en GCP
+```bash
+python -m compileall football_data_scraper.py football_data/
+```
 
-1. Construye y despliega la imagen Docker utilizando Google Cloud Build:
-   ```bash
-   gcloud builds submit --tag gcr.io/tu_project_id_gcp/football-data-scraper
-   ```
+## Programación diaria 5 AM
 
-2. Despliega el contenedor en Google Cloud Run:
-   ```bash
-   gcloud run deploy football-data-scraper \
-     --image gcr.io/tu_project_id_gcp/football-data-scraper \
-     --platform managed \
-     --region us-central1 \
-     --allow-unauthenticated
-   ```
+Ejemplo crontab (UTC):
 
-### Endpoints Disponibles
+```bash
+0 5 * * * /ruta/a/spark-submit /ruta/proyecto/football_data_scraper.py
+```
 
-- `POST /scrape-all-seasons/`: Scrapea y guarda los datos de todas las temporadas y ligas configuradas.
-- `POST /matches/`: Crea un nuevo partido en la base de datos.
-- `GET /matches/`: Recupera una lista de partidos.
-- `GET /matches/{match_id}`: Recupera los detalles de un partido específico por ID.
-
-## Gestión de Secretos con GCP
-
-Este proyecto utiliza Google Cloud Secrets Manager para manejar credenciales sensibles como las de la base de datos. Asegúrate de que las credenciales estén correctamente almacenadas en GCP y configuradas en el proyecto.
-
-## Contribuciones
-
-Las contribuciones son bienvenidas. Por favor, sigue los siguientes pasos:
-
-1. Haz un fork del repositorio.
-2. Crea una nueva rama (`git checkout -b feature/nueva_caracteristica`).
-3. Realiza tus cambios y haz commit (`git commit -m 'Agrega nueva característica'`).
-4. Envía los cambios a la rama (`git push origin feature/nueva_caracteristica`).
-5. Abre un Pull Request.
-
-## Licencia
-
-Este proyecto está bajo la Licencia MIT. Consulta el archivo [LICENSE](LICENSE) para más detalles.
-
+En GCP puedes usar Cloud Scheduler + Dataproc Serverless con la misma idea.
