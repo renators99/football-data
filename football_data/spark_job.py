@@ -6,7 +6,6 @@ from typing import Mapping, Sequence
 from pyspark.sql import SparkSession
 
 from .downloader import build_download_tasks, download_csv
-from .uploader import upload_results_to_gcs
 
 LOGGER = logging.getLogger(__name__)
 
@@ -35,16 +34,5 @@ def run_spark_job(config: Mapping[str, object], seasons: Sequence[str]):
 
     successes = sum(1 for item in results if item.get("success"))
     LOGGER.info("Descargas terminadas: %d exitosas de %d", successes, len(results))
-
-    bucket = config.get("gcs_bucket")
-    if bucket:
-        prefix = config.get("gcs_prefix")
-        LOGGER.info("Subiendo archivos a gs://%s con prefijo '%s'", bucket, prefix)
-        upload_results_to_gcs(
-            str(bucket),
-            None if prefix is None else str(prefix),
-            results,
-            base_dir=config["output_dir"],
-        )
 
     return results

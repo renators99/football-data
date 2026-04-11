@@ -5,6 +5,7 @@ from typing import Dict, Iterable, Optional, Sequence
 
 from football_data.config import DEFAULT_START_YEAR, load_config_from_env
 from football_data.seasons import build_season_list
+from football_data.silver import run_silver_layer
 from football_data.spark_job import run_spark_job
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -31,7 +32,16 @@ def run_scraper(
 
     config = config or build_config()
     chosen_seasons = list(seasons or choose_seasons(int(config.get("start_year", DEFAULT_START_YEAR))))
+    
+    LOGGER.info("Starting Bronze Layer (Scraper)...")
     run_spark_job(config, chosen_seasons)
+    
+    LOGGER.info("Starting Silver Layer (Processing)...")
+    run_silver_layer(config)
+    
+    LOGGER.info("Starting Gold Layer (Aggregates)...")
+    from football_data.gold import run_gold_layer
+    run_gold_layer(config)
 
 
 def spark_main() -> None:

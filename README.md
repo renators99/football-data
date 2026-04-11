@@ -23,8 +23,10 @@ de un perfil junior. Las piezas principales son:
   generados a un bucket de Google Cloud Storage.
 - `football_data.spark_job.run_spark_job`: arranca Spark, paraleliza las
   descargas y llama a la subida a GCS cuando está activada.
+- `football_data.silver.run_silver_layer`: procesa los datos raw, limpia partidos y calcula tablas de posiciones.
+- `football_data.gold.run_gold_layer`: genera agregados históricos y resúmenes por liga.
 - `football_data_scraper.run_scraper`: punto de entrada muy sencillo que usa las
-  funciones anteriores.
+  funciones anteriores para ejecutar todo el pipeline (Bronze -> Silver -> Gold).
 
 ## Estructura de directorios de salida
 
@@ -35,9 +37,16 @@ data/
       england_premier_league/
         9394.csv
         ...
-      spain_la_liga/
-        9394.csv
-        ...
+  silver/
+    matches/
+      part-00000...parquet
+    standings/
+      part-00000...parquet
+  gold/
+    league_summary/
+      part-00000...parquet
+    team_history/
+      part-00000...parquet
 ```
 
 Los archivos se guardan en `data/raw/football-data/<liga>/<temporada>.csv` por

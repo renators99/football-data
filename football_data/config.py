@@ -8,7 +8,6 @@ DEFAULT_BASE_URL = "https://www.football-data.co.uk/mmz4281/{season}/{league_cod
 DEFAULT_OUTPUT_DIR = Path("data/raw/football-data")
 DEFAULT_START_YEAR = 1993
 DEFAULT_PARTITIONS = 24
-DEFAULT_GCS_PREFIX = "lakehouse/football-data"
 DEFAULT_LEAGUE_CODES: Dict[str, str] = {
     "E0": "england_premier_league",
     "E1": "england_championship",
@@ -62,8 +61,6 @@ def load_config_from_env(
     output_dir = _load_env_path("FOOTBALL_DATA_OUTPUT_DIR", DEFAULT_OUTPUT_DIR)
     start_year = _load_env_int("FOOTBALL_DATA_START_YEAR", DEFAULT_START_YEAR)
     partitions = _load_env_int("FOOTBALL_DATA_PARTITIONS", DEFAULT_PARTITIONS)
-    gcs_bucket = os.getenv("FOOTBALL_DATA_GCS_BUCKET")
-    gcs_prefix = os.getenv("FOOTBALL_DATA_GCS_PREFIX", DEFAULT_GCS_PREFIX)
 
     if league_codes is None:
         override = os.getenv("FOOTBALL_DATA_LEAGUE_CODES")
@@ -79,8 +76,6 @@ def load_config_from_env(
         "output_dir": Path(output_dir),
         "start_year": start_year,
         "partitions": partitions,
-        "gcs_bucket": gcs_bucket,
-        "gcs_prefix": gcs_prefix,
         "league_codes": league_codes,
     }
 
