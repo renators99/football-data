@@ -1,5 +1,3 @@
-"""football_data package."""
+"""Small helpers for the football-data.co.uk scraper."""
 
-from .spark_job import run_spark_job
-
-__all__ = ["run_spark_job"]
+__all__ = []

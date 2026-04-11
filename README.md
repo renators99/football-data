@@ -1,93 +1,158 @@
-# Football Data Scraper (PySpark + Lakehouse)
+# Football Data Scraper
 
-Pipeline en Python/PySpark para descargar CSV de `football-data.co.uk` y construir capas **bronze, silver y gold** listas para data lake en local y en GCP.
+Este repositorio contiene un conjunto de componentes modulares en PySpark que
+automatizan la descarga diaria de los CSV publicados por
+[football-data.co.uk](https://www.football-data.co.uk) para las ligas inglesa (1.ª y
+2.ª división), española, italiana, francesa, alemana, holandesa y portuguesa. Cada
+ciclo recrea por completo los archivos de todas las temporadas disponibles, por lo
+que puedes programarlo sin preocuparte por acumulaciones de ejecuciones previas.
 
-## Ligas incluidas
+## Arquitectura del código
 
-- Inglaterra: `E0` (Premier League), `E1` (Championship)
-- España: `SP1` (La Liga), `SP2` (Segunda)
-- Italia: `I1`, `I2`
-- Francia: `F1`, `F2`
-- Alemania: `D1`, `D2`
-- Holanda: `N1`
-- Portugal: `P1`
+Todo el código se organizó con funciones muy directas para mantenerlo al nivel
+de un perfil junior. Las piezas principales son:
 
-## Estructura del proyecto (más dividida por librerías)
+- `football_data.config.load_config_from_env`: reúne las variables de entorno en
+  un diccionario con valores por defecto.
+- `football_data.seasons.build_season_list`: arma los códigos de temporada
+  (`9394`, `2324`, etc.) según el año inicial que se indique.
+- `football_data.downloader.build_download_tasks` y
+  `football_data.downloader.download_csv`: crean las combinaciones de liga y
+  temporada y realizan cada descarga.
+- `football_data.uploader.upload_results_to_gcs`: opcionalmente sube los CSV
+  generados a un bucket de Google Cloud Storage.
+- `football_data.spark_job.run_spark_job`: arranca Spark, paraleliza las
+  descargas y llama a la subida a GCS cuando está activada.
+- `football_data_scraper.run_scraper`: punto de entrada muy sencillo que usa las
+  funciones anteriores.
 
-- `football_data/config.py`: variables de entorno y configuración.
-- `football_data/seasons.py`: generación de temporadas (`9394`, `2425`, etc.).
-- `football_data/downloader.py`: armado de tareas y descarga de CSV (bronze).
-- `football_data/silver.py`: normalización a esquema de partidos.
-- `football_data/gold.py`: agregados de negocio (tabla por equipo y resumen de liga).
-- `football_data/layers.py`: rutas de capas del lakehouse.
-- `football_data/uploader.py`: subida del lakehouse completo a GCS.
-- `football_data/spark_job.py`: orquestación completa Spark.
-- `football_data_scraper.py`: entrypoint.
+## Estructura de directorios de salida
 
-## Capas Lakehouse
-
-Por defecto se escribe en `data/lakehouse`:
-
-```text
-data/lakehouse/
-  bronze/
+```
+data/
+  raw/
     football-data/
-      league_code=E0/league_name=england_premier_league/season=2324/data.csv
-  silver/
-    matches/
-      league_code=E0/season=2324/part-*.parquet
-  gold/
-    team_season_table/
-      league_code=E0/season=2324/part-*.parquet
-    league_season_summary/
-      league_code=E0/season=2324/part-*.parquet
+      england_premier_league/
+        9394.csv
+        ...
+      spain_la_liga/
+        9394.csv
+        ...
 ```
 
-## Variables de entorno
+Los archivos se guardan en `data/raw/football-data/<liga>/<temporada>.csv` por
+defecto. Puedes cambiar la ruta con la variable de entorno `FOOTBALL_DATA_OUTPUT_DIR`.
 
-- `FOOTBALL_DATA_OUTPUT_DIR` (default: `data/lakehouse`)
-- `FOOTBALL_DATA_START_YEAR` (default: `1993`)
-- `FOOTBALL_DATA_PARTITIONS` (default: `24`)
-- `FOOTBALL_DATA_GCS_BUCKET` (opcional)
-- `FOOTBALL_DATA_GCS_PREFIX` (default: `lakehouse`)
-- `FOOTBALL_DATA_LEAGUE_CODES` (opcional `CODIGO=nombre,CODIGO2=nombre2`)
+## Variables de configuración
 
-## Instalación
+- `FOOTBALL_DATA_OUTPUT_DIR`: carpeta de destino para los CSV (por defecto
+  `data/raw/football-data`).
+- `FOOTBALL_DATA_START_YEAR`: primer año de la serie histórica (por defecto
+  `1993`).
+- `FOOTBALL_DATA_PARTITIONS`: número de particiones Spark para paralelizar las
+  descargas (por defecto `24`).
+- `FOOTBALL_DATA_GCS_BUCKET`: nombre del bucket de Cloud Storage donde se
+  copiarán los CSV (opcional).
+- `FOOTBALL_DATA_GCS_PREFIX`: prefijo dentro del bucket (por defecto
+  `lakehouse/football-data`).
+- `FOOTBALL_DATA_LEAGUE_CODES`: lista personalizada de ligas en formato
+  `CODIGO=nombre_largo,CODIGO2=otra_liga`. Si no se define, se usan las ligas por
+  defecto mencionadas arriba.
+
+## Requisitos
+
+- Python 3.10+
+- PySpark 3.5 (se instala automáticamente desde `requirements.txt`)
+- Java Runtime (requerido por PySpark)
+- SDK de Google Cloud configurado con Application Default Credentials (solo si
+  deseas subir a GCS)
+
+## Instalación rápida
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate  # En Windows usa .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-## Ejecución
+## Ejecución local
 
 ```bash
+# Dentro del entorno virtual
 spark-submit football_data_scraper.py
 ```
 
-## Carga a GCP (lakehouse)
+Puedes pasar variables de entorno antes del comando para personalizar el
+comportamiento. El script llamará a las funciones descritas en la sección de
+arquitectura y ejecutará la descarga completa.
 
-```bash
-export FOOTBALL_DATA_GCS_BUCKET="mi-bucket"
-export FOOTBALL_DATA_GCS_PREFIX="lakehouse"
-spark-submit football_data_scraper.py
-```
+## Carga automática al Lakehouse en GCP
 
-Con eso se suben archivos de bronze/silver/gold al bucket.
+Cuando la variable `FOOTBALL_DATA_GCS_BUCKET` está configurada, cada descarga
+exitosa se sube automáticamente a Cloud Storage siguiendo la misma estructura de
+carpetas. Pasos sugeridos:
 
-## Prueba rápida
+1. **Crear el bucket (una sola vez)**:
 
-```bash
-python -m compileall football_data_scraper.py football_data/
-```
+   ```bash
+   gcloud storage buckets create gs://mi-bucket-lakehouse --location=EU
+   ```
 
-## Programación diaria 5 AM
+2. **Configurar credenciales**: asegúrate de que el job tenga credenciales con
+   permisos `roles/storage.objectAdmin` sobre el bucket. En local puedes usar
+   Application Default Credentials:
 
-Ejemplo crontab (UTC):
+   ```bash
+   gcloud auth application-default login
+   ```
 
-```bash
-0 5 * * * /ruta/a/spark-submit /ruta/proyecto/football_data_scraper.py
-```
+3. **Definir variables de entorno antes de ejecutar**:
 
-En GCP puedes usar Cloud Scheduler + Dataproc Serverless con la misma idea.
+   ```bash
+   export FOOTBALL_DATA_GCS_BUCKET="mi-bucket-lakehouse"
+   export FOOTBALL_DATA_GCS_PREFIX="lakehouse/football-data"
+   spark-submit football_data_scraper.py
+   ```
+
+4. **Verificar en Cloud Storage**:
+
+   ```bash
+   gcloud storage ls gs://mi-bucket-lakehouse/lakehouse/football-data/spain_la_liga/
+   ```
+
+Estos archivos pueden conectarse a BigQuery mediante BigLake o a cualquier otro
+motor de lakehouse compatible con Cloud Storage.
+
+## ¿Cómo probar todo?
+
+1. **Verificar dependencias**: ejecuta `python -m compileall football_data_scraper.py football_data/`
+   para asegurarte de que no existan errores de sintaxis.
+2. **Ejecutar el job**: corre `spark-submit football_data_scraper.py` (o
+   `spark-submit --conf ...` si necesitas ajustar parámetros). El job descargará
+   todas las temporadas disponibles y mostrará en consola un resumen de
+   descargas exitosas.
+3. **Comprobar los resultados**: revisa el directorio `data/raw/football-data`
+   (o el que hayas configurado) y confirma que existan subcarpetas por liga con
+   los CSV de cada temporada. Por ejemplo:
+
+   ```bash
+   ls data/raw/football-data/spain_la_liga | head
+   ```
+
+4. **Repetir en modo limpio** (opcional): elimina la carpeta de salida y vuelve
+   a ejecutar el script para confirmar que la ingesta es reproducible y
+   sobrescribe los datos cada vez.
+
+## Programación diaria a las 5 AM
+
+1. Sube el contenido de este repositorio a un bucket de GCS.
+2. Crea un job serverless de PySpark (por ejemplo, Dataproc Serverless) cuyo
+   entrypoint sea `football_data_scraper.py` (la función `spark_main` también
+   está disponible si el servicio la requiere).
+3. Asigna a la cuenta de servicio permisos `roles/storage.objectAdmin` sobre el
+   bucket donde se almacenarán los datos.
+4. Programa la ejecución diaria a las 05:00 con Cloud Scheduler u orquestador
+   equivalente pasando las variables de entorno anteriores.
+
+Cada ejecución sobrescribe los archivos existentes, manteniendo el dataset
+actualizado sin pasos adicionales.

@@ -25,9 +25,7 @@ def build_download_tasks(config: Mapping[str, object], seasons: Sequence[str]) -
                 {
                     "season": season,
                     "league_code": league_code,
-                    "output_path": Path(league_dir)
-                    / f"season={season}"
-                    / "data.csv",
+                    "output_path": Path(league_dir) / f"{season}.csv",
                 }
             )
     return tasks

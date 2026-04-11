@@ -4,13 +4,11 @@ import os
 from pathlib import Path
 from typing import Dict, Mapping, Optional
 
-from .layers import raw_download_root
-
 DEFAULT_BASE_URL = "https://www.football-data.co.uk/mmz4281/{season}/{league_code}.csv"
-DEFAULT_OUTPUT_DIR = Path("data/lakehouse")
+DEFAULT_OUTPUT_DIR = Path("data/raw/football-data")
 DEFAULT_START_YEAR = 1993
 DEFAULT_PARTITIONS = 24
-DEFAULT_GCS_PREFIX = "lakehouse"
+DEFAULT_GCS_PREFIX = "lakehouse/football-data"
 DEFAULT_LEAGUE_CODES: Dict[str, str] = {
     "E0": "england_premier_league",
     "E1": "england_championship",
@@ -88,11 +86,7 @@ def load_config_from_env(
 
 
 def resolve_league_dir(config: Mapping[str, object], league_code: str) -> Path:
-    """Return the bronze directory for one league."""
+    """Helper to know where to save the CSV for one league."""
 
     league_name = config["league_codes"][league_code]  # type: ignore[index]
-    return (
-        raw_download_root(Path(config["output_dir"]))  # type: ignore[arg-type]
-        / f"league_code={league_code}"
-        / f"league_name={league_name}"
-    )
+    return Path(config["output_dir"]) / league_name  # type: ignore[arg-type]
