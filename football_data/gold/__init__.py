@@ -21,6 +21,14 @@ def _build_team_match_rows(silver_matches: DataFrame) -> DataFrame:
     both_teams_scored = (
         (F.col("full_time_home_goals") > 0) & (F.col("full_time_away_goals") > 0)
     ).cast("int")
+    home_leading_at_half = (F.col("half_time_home_goals") > F.col("half_time_away_goals")).cast("int")
+    away_leading_at_half = (F.col("half_time_away_goals") > F.col("half_time_home_goals")).cast("int")
+    home_trailing_at_half = (F.col("half_time_home_goals") < F.col("half_time_away_goals")).cast("int")
+    away_trailing_at_half = (F.col("half_time_away_goals") < F.col("half_time_home_goals")).cast("int")
+    home_avoided_defeat = (F.col("full_time_result") != "A").cast("int")
+    away_avoided_defeat = (F.col("full_time_result") != "H").cast("int")
+    home_did_not_win = (F.col("full_time_result") != "H").cast("int")
+    away_did_not_win = (F.col("full_time_result") != "A").cast("int")
 
     home_rows = silver_matches.select(
         "league_code",
@@ -52,6 +60,10 @@ def _build_team_match_rows(silver_matches: DataFrame) -> DataFrame:
         F.when(total_goals >= 2, 1).otherwise(0).alias("over_1_5_matches"),
         F.when(total_goals >= 3, 1).otherwise(0).alias("over_2_5_matches"),
         F.when(total_goals >= 4, 1).otherwise(0).alias("over_3_5_matches"),
+        home_leading_at_half.alias("leading_at_half"),
+        home_trailing_at_half.alias("trailing_at_half"),
+        F.when((home_trailing_at_half == 1) & (home_avoided_defeat == 1), 1).otherwise(0).alias("comeback_results"),
+        F.when((home_leading_at_half == 1) & (home_did_not_win == 1), 1).otherwise(0).alias("blown_leads"),
     )
 
     away_rows = silver_matches.select(
@@ -84,6 +96,10 @@ def _build_team_match_rows(silver_matches: DataFrame) -> DataFrame:
         F.when(total_goals >= 2, 1).otherwise(0).alias("over_1_5_matches"),
         F.when(total_goals >= 3, 1).otherwise(0).alias("over_2_5_matches"),
         F.when(total_goals >= 4, 1).otherwise(0).alias("over_3_5_matches"),
+        away_leading_at_half.alias("leading_at_half"),
+        away_trailing_at_half.alias("trailing_at_half"),
+        F.when((away_trailing_at_half == 1) & (away_avoided_defeat == 1), 1).otherwise(0).alias("comeback_results"),
+        F.when((away_leading_at_half == 1) & (away_did_not_win == 1), 1).otherwise(0).alias("blown_leads"),
     )
 
     return home_rows.unionByName(away_rows)
@@ -123,6 +139,10 @@ def build_gold_team_table(silver_matches: DataFrame) -> DataFrame:
             F.sum("over_1_5_matches").alias("over_1_5_matches"),
             F.sum("over_2_5_matches").alias("over_2_5_matches"),
             F.sum("over_3_5_matches").alias("over_3_5_matches"),
+            F.sum("leading_at_half").alias("leading_at_half"),
+            F.sum("trailing_at_half").alias("trailing_at_half"),
+            F.sum("comeback_results").alias("comeback_results"),
+            F.sum("blown_leads").alias("blown_leads"),
         )
         .withColumn("goal_difference", F.col("goals_for") - F.col("goals_against"))
         .withColumn("points", F.col("wins") * 3 + F.col("draws"))
@@ -147,14 +167,42 @@ def build_gold_team_table(silver_matches: DataFrame) -> DataFrame:
         .withColumn("avg_shots_against", _safe_ratio(F.col("shots_against"), F.col("matches_played")))
         .withColumn("avg_shots_on_target_for", _safe_ratio(F.col("shots_on_target_for"), F.col("matches_played")))
         .withColumn("avg_shots_on_target_against", _safe_ratio(F.col("shots_on_target_against"), F.col("matches_played")))
+        .withColumn("shot_dominance_index", _safe_ratio(F.col("shots_for") - F.col("shots_against"), F.col("matches_played")))
+        .withColumn(
+            "on_target_dominance_index",
+            _safe_ratio(F.col("shots_on_target_for") - F.col("shots_on_target_against"), F.col("matches_played")),
+        )
+        .withColumn(
+            "territorial_dominance_proxy",
+            _safe_ratio(F.col("corners_for") - F.col("corners_against"), F.col("matches_played")),
+        )
         .withColumn("shot_accuracy", _safe_ratio(F.col("shots_on_target_for"), F.col("shots_for")))
         .withColumn("shot_conversion_rate", _safe_ratio(F.col("goals_for"), F.col("shots_for")))
+        .withColumn(
+            "net_efficiency",
+            _safe_ratio(F.col("goals_for"), F.col("shots_on_target_for"))
+            - _safe_ratio(F.col("goals_against"), F.col("shots_on_target_against")),
+        )
+        .withColumn("pressure_without_payoff", F.col("avg_shots_for") - F.col("goals_for_per_match"))
+        .withColumn(
+            "opponent_suppression_rate",
+            F.lit(1.0) - _safe_ratio(F.col("shots_on_target_against"), F.col("shots_against")),
+        )
         .withColumn("avg_corners_for", _safe_ratio(F.col("corners_for"), F.col("matches_played")))
         .withColumn("avg_corners_against", _safe_ratio(F.col("corners_against"), F.col("matches_played")))
         .withColumn("avg_fouls_for", _safe_ratio(F.col("fouls_for"), F.col("matches_played")))
         .withColumn("avg_fouls_against", _safe_ratio(F.col("fouls_against"), F.col("matches_played")))
         .withColumn("avg_yellow_cards", _safe_ratio(F.col("yellow_cards"), F.col("matches_played")))
         .withColumn("avg_red_cards", _safe_ratio(F.col("red_cards"), F.col("matches_played")))
+        .withColumn("fast_start_rate", _safe_ratio(F.col("leading_at_half"), F.col("matches_played")))
+        .withColumn("second_half_surge_index", _safe_ratio(F.col("second_half_goals_for"), F.col("goals_for")))
+        .withColumn("second_half_collapse_index", _safe_ratio(F.col("second_half_goals_against"), F.col("goals_against")))
+        .withColumn("comeback_rate", _safe_ratio(F.col("comeback_results"), F.col("trailing_at_half")))
+        .withColumn("blown_lead_rate", _safe_ratio(F.col("blown_leads"), F.col("leading_at_half")))
+        .withColumn(
+            "first_half_control_index",
+            _safe_ratio(F.col("first_half_goals_for") - F.col("first_half_goals_against"), F.col("matches_played")),
+        )
         .withColumn("discipline_points", F.col("yellow_cards") + (F.col("red_cards") * 2))
         .withColumn("discipline_points_per_match", _safe_ratio(F.col("discipline_points"), F.col("matches_played")))
     )

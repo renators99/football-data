@@ -18,8 +18,9 @@ def build_download_tasks(config: Mapping[str, object], seasons: Sequence[str]) -
     """Create the combinations of league and season we want to fetch."""
 
     tasks: List[DownloadTask] = []
+    run_output_dir = Path(config["run_output_dir"]) if "run_output_dir" in config else Path(config["output_dir"])
     for league_code in config["league_codes"]:  # type: ignore[index]
-        league_dir = resolve_league_dir(config, league_code)
+        league_dir = resolve_league_dir({**config, "output_dir": run_output_dir}, league_code)
         for season in seasons:
             tasks.append(
                 {

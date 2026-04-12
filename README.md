@@ -8,8 +8,8 @@ bronze y construir capas `silver` y `gold` con datos normalizados y agregados.
 
 El código está organizado por capas dentro del paquete `football_data`:
 
-- `football_data.bronze`: descarga los CSV y puede subirlos a Google Cloud
-  Storage.
+- `football_data.bronze`: descarga CSV temporales por corrida y materializa una
+  copia persistente en Parquet.
 - `football_data.silver`: transforma los CSV raw en una tabla normalizada de
   partidos.
 - `football_data.gold`: genera agregados curados por equipo, liga y temporada,
@@ -48,35 +48,44 @@ football-data-backend/
 
 ```text
 data/
-  bronze/
+  raw/
     football-data/
-      england_premier_league/
-        9394.csv
-        ...
-  silver/
-    matches/
-      league_code=E0/
-        season=2324/
-          part-*.parquet
-  gold/
-    team_season_table/
-      league_code=E0/
-        season=2324/
-          part-*.parquet
-    league_season_summary/
-      league_code=E0/
-        season=2324/
-          part-*.parquet
+      _runs/
+        20260411T120000Z/
+          england_premier_league/
+            9394.csv
+            ...
+    bronze/
+      matches/
+        league_code=E0/
+          season=2324/
+            part-*.parquet
+    silver/
+      matches/
+        league_code=E0/
+          season=2324/
+            part-*.parquet
+    gold/
+      team_season_table/
+        league_code=E0/
+          season=2324/
+            part-*.parquet
+      league_season_summary/
+        league_code=E0/
+          season=2324/
+            part-*.parquet
 ```
 
-Por defecto, la descarga raw se guarda en
-`data/bronze/football-data/<liga>/<temporada>.csv`. Puedes cambiar la raíz con
+Por defecto, cada ejecución descarga primero CSV temporales en
+`data/raw/football-data/_runs/<run_id>/...`, luego materializa la capa bronze en
+Parquet en `data/raw/bronze/matches` y finalmente elimina esos CSV temporales
+si la corrida termina bien. Puedes cambiar la raíz temporal con
 `FOOTBALL_DATA_OUTPUT_DIR`.
 
 ## Variables de configuración
 
-- `FOOTBALL_DATA_OUTPUT_DIR`: carpeta base de salida. Por defecto:
-  `data/bronze/football-data`.
+- `FOOTBALL_DATA_OUTPUT_DIR`: carpeta base para el staging temporal de CSV. Por
+  defecto: `data/raw/football-data`.
 - `FOOTBALL_DATA_START_YEAR`: primer año histórico a descargar. Por defecto:
   `1993`.
 - `FOOTBALL_DATA_PARTITIONS`: número de particiones Spark. Por defecto: `24`.
@@ -109,18 +118,24 @@ spark-submit football_data_scraper.py
 
 El pipeline ejecuta en orden:
 
-1. Descarga de CSV a bronze.
-2. Construcción de `silver/matches`.
-3. Construcción de `gold/team_season_table`.
-4. Construcción de `gold/league_season_summary`.
+1. Descarga de CSV temporales por ejecución.
+2. Materialización de `bronze/matches` en Parquet.
+3. Construcción de `silver/matches`.
+4. Construcción de `gold/team_season_table`.
+5. Construcción de `gold/league_season_summary`.
 
 La capa `gold` ahora añade, entre otras, estas métricas avanzadas:
 
 - En `team_season_table`: `points_per_match`, `win_rate`,
   `goals_for_per_match`, `clean_sheet_rate`, `both_teams_scored_rate`,
   `over_2_5_rate`, `avg_shots_for`, `avg_shots_on_target_for`,
-  `shot_accuracy`, `shot_conversion_rate`, `avg_corners_for` y métricas de
-  disciplina por partido.
+  `shot_accuracy`, `shot_conversion_rate`, `shot_dominance_index`,
+  `on_target_dominance_index`, `territorial_dominance_proxy`,
+  `net_efficiency`, `pressure_without_payoff`, `opponent_suppression_rate`,
+  `fast_start_rate`, `second_half_surge_index`,
+  `second_half_collapse_index`, `comeback_rate`, `blown_lead_rate`,
+  `first_half_control_index`, `avg_corners_for` y métricas de disciplina por
+  partido.
 - En `league_season_summary`: `home_win_rate`, `away_win_rate`,
   `both_teams_scored_rate`, `over_1_5_rate`, `over_2_5_rate`,
   `avg_shots_per_match`, `avg_shots_on_target_per_match`,
@@ -134,10 +149,10 @@ python -m compileall football_data_scraper.py football_data/
 
 Luego revisa que existan archivos en:
 
-- `data/bronze/football-data`
-- `data/silver/matches`
-- `data/gold/team_season_table`
-- `data/gold/league_season_summary`
+- `data/raw/bronze/matches`
+- `data/raw/silver/matches`
+- `data/raw/gold/team_season_table`
+- `data/raw/gold/league_season_summary`
 
 ## Carga automática a GCS
 
