@@ -12,7 +12,8 @@ El código está organizado por capas dentro del paquete `football_data`:
   Storage.
 - `football_data.silver`: transforma los CSV raw en una tabla normalizada de
   partidos.
-- `football_data.gold`: genera agregados curados por equipo, liga y temporada.
+- `football_data.gold`: genera agregados curados por equipo, liga y temporada,
+  incluyendo métricas avanzadas de rendimiento, volumen ofensivo y disciplina.
 - `football_data.utils`: helpers de configuración, temporadas y rutas.
 - `football_data_scraper.run_scraper`: entrypoint que ejecuta el pipeline
   `Bronze -> Silver -> Gold`.
@@ -112,6 +113,18 @@ El pipeline ejecuta en orden:
 2. Construcción de `silver/matches`.
 3. Construcción de `gold/team_season_table`.
 4. Construcción de `gold/league_season_summary`.
+
+La capa `gold` ahora añade, entre otras, estas métricas avanzadas:
+
+- En `team_season_table`: `points_per_match`, `win_rate`,
+  `goals_for_per_match`, `clean_sheet_rate`, `both_teams_scored_rate`,
+  `over_2_5_rate`, `avg_shots_for`, `avg_shots_on_target_for`,
+  `shot_accuracy`, `shot_conversion_rate`, `avg_corners_for` y métricas de
+  disciplina por partido.
+- En `league_season_summary`: `home_win_rate`, `away_win_rate`,
+  `both_teams_scored_rate`, `over_1_5_rate`, `over_2_5_rate`,
+  `avg_shots_per_match`, `avg_shots_on_target_per_match`,
+  `avg_corners_per_match` y tarjetas medias por partido.
 
 ## Verificación rápida
 
