@@ -6,7 +6,7 @@ from typing import Dict, Iterable, List, Mapping, Sequence
 
 import requests
 
-from .config import resolve_league_dir
+from ..utils.config import resolve_league_dir
 
 LOGGER = logging.getLogger(__name__)
 

@@ -48,7 +48,7 @@ def _parse_league_codes(raw: str) -> Dict[str, str]:
         code, name = item.split("=", 1)
         codes[code.strip()] = name.strip()
     if not codes:
-        raise ValueError("FOOTBALL_DATA_LEAGUE_CODES no puede quedar vacío")
+        raise ValueError("FOOTBALL_DATA_LEAGUE_CODES no puede quedar vacÃ­o")
     return codes
 
 

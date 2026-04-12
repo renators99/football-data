@@ -3,10 +3,10 @@
 import logging
 from typing import Dict, Iterable, Optional, Sequence
 
-from football_data.config import DEFAULT_START_YEAR, load_config_from_env
-from football_data.seasons import build_season_list
+from football_data.bronze import run_spark_job
 from football_data.silver import run_silver_layer
-from football_data.spark_job import run_spark_job
+from football_data.utils.config import DEFAULT_START_YEAR, load_config_from_env
+from football_data.utils.seasons import build_season_list
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 LOGGER = logging.getLogger(__name__)

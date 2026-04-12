@@ -1,11 +1,15 @@
 """Build curated gold tables from the silver layer."""
 
+import logging
 from pathlib import Path
+from typing import Mapping
 
-from pyspark.sql import DataFrame
+from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
-from .layers import gold_root
+from ..utils.layers import gold_root, silver_root
+
+LOGGER = logging.getLogger(__name__)
 
 
 def build_gold_team_table(silver_matches: DataFrame) -> DataFrame:
@@ -71,3 +75,26 @@ def write_gold_layer(team_table: DataFrame, league_summary: DataFrame, output_di
     team_table.write.mode("overwrite").partitionBy("league_code", "season").parquet(str(team_destination))
     league_summary.write.mode("overwrite").partitionBy("league_code", "season").parquet(str(summary_destination))
     return team_destination, summary_destination
+
+
+def run_gold_layer(config: Mapping[str, object]) -> tuple[Path, Path]:
+    """Read the silver matches table and materialize curated gold outputs."""
+
+    raw_root = Path(config["output_dir"])
+    silver_matches_path = silver_root(raw_root.parent) / "matches"
+
+    spark = (
+        SparkSession.builder.appName("football-data-gold")
+        .config("spark.sql.execution.arrow.pyspark.enabled", "true")
+        .getOrCreate()
+    )
+
+    try:
+        silver_matches = spark.read.parquet(str(silver_matches_path))
+        team_table = build_gold_team_table(silver_matches)
+        league_summary = build_gold_league_summary(silver_matches)
+        destinations = write_gold_layer(team_table, league_summary, raw_root.parent)
+        LOGGER.info("Gold layer escrita en %s y %s", destinations[0], destinations[1])
+        return destinations
+    finally:
+        spark.stop()
