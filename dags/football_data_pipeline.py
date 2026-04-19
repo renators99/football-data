@@ -1,25 +1,64 @@
-"""Airflow DAG for the football-data lakehouse pipeline."""
+"""Airflow DAG for the football-data lakehouse pipeline on Google Cloud Dataproc."""
 
 from __future__ import annotations
 
 import logging
 import os
-import sys
 from datetime import timedelta
 from pathlib import Path
 
 import pendulum
 from airflow import DAG
-from airflow.operators.python import PythonOperator
+from airflow.providers.google.cloud.operators.bigquery import BigQueryInsertJobOperator
+from airflow.providers.google.cloud.operators.dataproc import DataprocSubmitJobOperator
+from airflow.providers.google.cloud.sensors.bigquery import BigQueryTableExistenceSensor
+from airflow.utils.trigger_rule import TriggerRule
 
 LOGGER = logging.getLogger(__name__)
 PROJECT_DIR = Path(os.getenv("FOOTBALL_DATA_PROJECT_DIR", "/opt/airflow/project"))
+GCP_PROJECT = os.getenv("GCP_PROJECT", "your-gcp-project")
+GCP_REGION = os.getenv("GCP_REGION", "us-central1")
+DATAPROC_CLUSTER = os.getenv("DATAPROC_CLUSTER", "football-cluster")
+BQ_DATASET = os.getenv("BQ_DATASET", "football_data")
+GCS_BUCKET = os.getenv("GCS_BUCKET", "your-bucket")
+
+
+# Queries para crear tablas externas en BigQuery
+CREATE_BRONZE_TABLE = f"""
+CREATE OR REPLACE EXTERNAL TABLE `{GCP_PROJECT}.{BQ_DATASET}.bronze_matches`
+OPTIONS (
+  format = 'PARQUET',
+  uris = ['gs://{GCS_BUCKET}/football-data/bronze/matches/*.parquet']
+);
+"""
+
+CREATE_SILVER_TABLE = f"""
+CREATE OR REPLACE EXTERNAL TABLE `{GCP_PROJECT}.{BQ_DATASET}.silver_matches`
+OPTIONS (
+  format = 'PARQUET',
+  uris = ['gs://{GCS_BUCKET}/football-data/silver/matches/*.parquet']
+);
+"""
+
+CREATE_GOLD_TABLE = f"""
+CREATE OR REPLACE EXTERNAL TABLE `{GCP_PROJECT}.{BQ_DATASET}.gold_team_season`
+OPTIONS (
+  format = 'PARQUET',
+  uris = ['gs://{GCS_BUCKET}/football-data/gold/team_season/*.parquet']
+);
+"""
 
 
 def _ensure_project_importable() -> None:
     project_path = str(PROJECT_DIR)
     if project_path not in sys.path:
         sys.path.insert(0, project_path)
+
+
+def create_tables_and_views() -> None:
+    _ensure_project_importable()
+
+    LOGGER.info("Tables and views will be created via BigQuery operators in the DAG")
 
 
 def run_bronze_layer() -> None:
@@ -66,26 +105,148 @@ default_args = {
 with DAG(
     dag_id="football_data_pipeline",
     default_args=default_args,
-    description="Download football-data.co.uk CSVs and build bronze, silver and gold parquet layers.",
-    schedule="@daily",
+    description="Download football-data.co.uk CSVs and build bronze, silver and gold parquet layers on Dataproc.",
+    schedule="0 2 * * *",
     start_date=pendulum.datetime(2026, 4, 1, tz="UTC"),
     catchup=False,
     max_active_runs=1,
-    tags=["football-data", "pyspark", "lakehouse"],
+    tags=["football-data", "pyspark", "lakehouse", "gcp"],
 ) as dag:
-    bronze = PythonOperator(
+    check_bronze_table = BigQueryTableExistenceSensor(
+        task_id="check_bronze_table_exists",
+        project_id=GCP_PROJECT,
+        dataset_id=BQ_DATASET,
+        table_id="bronze_matches",
+        gcp_conn_id="google_cloud_default",
+        poke_interval=30,
+        timeout=60,
+    )
+
+    create_bronze_table = BigQueryInsertJobOperator(
+        task_id="create_bronze_table",
+        configuration={
+            "query": {
+                "query": CREATE_BRONZE_TABLE,
+                "useLegacySql": False,
+            }
+        },
+        gcp_conn_id="google_cloud_default",
+        trigger_rule=TriggerRule.ONE_FAILED,
+    )
+
+    check_silver_table = BigQueryTableExistenceSensor(
+        task_id="check_silver_table_exists",
+        project_id=GCP_PROJECT,
+        dataset_id=BQ_DATASET,
+        table_id="silver_matches",
+        gcp_conn_id="google_cloud_default",
+        poke_interval=30,
+        timeout=60,
+    )
+
+    create_silver_table = BigQueryInsertJobOperator(
+        task_id="create_silver_table",
+        configuration={
+            "query": {
+                "query": CREATE_SILVER_TABLE,
+                "useLegacySql": False,
+            }
+        },
+        gcp_conn_id="google_cloud_default",
+        trigger_rule=TriggerRule.ONE_FAILED,
+    )
+
+    check_gold_table = BigQueryTableExistenceSensor(
+        task_id="check_gold_table_exists",
+        project_id=GCP_PROJECT,
+        dataset_id=BQ_DATASET,
+        table_id="gold_team_season",
+        gcp_conn_id="google_cloud_default",
+        poke_interval=30,
+        timeout=60,
+    )
+
+    create_gold_table = BigQueryInsertJobOperator(
+        task_id="create_gold_table",
+        configuration={
+            "query": {
+                "query": CREATE_GOLD_TABLE,
+                "useLegacySql": False,
+            }
+        },
+        gcp_conn_id="google_cloud_default",
+        trigger_rule=TriggerRule.ONE_FAILED,
+    )
+
+    bronze_job = {
+        "reference": {"project_id": GCP_PROJECT},
+        "placement": {"cluster_name": DATAPROC_CLUSTER},
+        "pyspark_job": {
+            "main_python_file_uri": f"gs://{GCS_BUCKET}/football_data/bronze/run_bronze.py",
+            "args": [],
+        },
+    }
+
+    bronze = DataprocSubmitJobOperator(
         task_id="bronze_download_matches",
-        python_callable=run_bronze_layer,
+        job=bronze_job,
+        region=GCP_REGION,
+        gcp_conn_id="google_cloud_default",
+        trigger_rule=TriggerRule.ONE_SUCCESS,
     )
 
-    silver = PythonOperator(
+    silver_job = {
+        "reference": {"project_id": GCP_PROJECT},
+        "placement": {"cluster_name": DATAPROC_CLUSTER},
+        "pyspark_job": {
+            "main_python_file_uri": f"gs://{GCS_BUCKET}/football_data/silver/run_silver.py",
+            "args": [],
+        },
+    }
+
+    silver = DataprocSubmitJobOperator(
         task_id="silver_normalize_matches",
-        python_callable=run_silver_layer,
+        job=silver_job,
+        region=GCP_REGION,
+        gcp_conn_id="google_cloud_default",
+        trigger_rule=TriggerRule.ONE_SUCCESS,
     )
 
-    gold = PythonOperator(
+    gold_job = {
+        "reference": {"project_id": GCP_PROJECT},
+        "placement": {"cluster_name": DATAPROC_CLUSTER},
+        "pyspark_job": {
+            "main_python_file_uri": f"gs://{GCS_BUCKET}/football_data/gold/run_gold.py",
+            "args": [],
+        },
+    }
+
+    gold = DataprocSubmitJobOperator(
         task_id="gold_build_aggregates",
-        python_callable=run_gold_layer,
+        job=gold_job,
+        region=GCP_REGION,
+        gcp_conn_id="google_cloud_default",
+        trigger_rule=TriggerRule.ONE_SUCCESS,
     )
 
-    bronze >> silver >> gold
+    ml_job = {
+        "reference": {"project_id": GCP_PROJECT},
+        "placement": {"cluster_name": DATAPROC_CLUSTER},
+        "pyspark_job": {
+            "main_python_file_uri": f"gs://{GCS_BUCKET}/football_data/ml/run_ml.py",
+            "args": [],
+        },
+    }
+
+    ml = DataprocSubmitJobOperator(
+        task_id="ml_train_model",
+        job=ml_job,
+        region=GCP_REGION,
+        gcp_conn_id="google_cloud_default",
+    )
+
+    check_bronze_table >> create_bronze_table >> bronze
+    check_silver_table >> create_silver_table >> silver
+    check_gold_table >> create_gold_table >> gold
+
+    bronze >> silver >> gold >> ml

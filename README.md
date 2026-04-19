@@ -26,28 +26,30 @@ Funciones principales:
 - `football_data.silver.run_silver_layer`
 - `football_data.gold.run_gold_layer`
 
-## Estructura del proyecto
+## Despliegue en Google Cloud Platform (GCP)
 
-```text
-football-data-backend/
-  football_data/
-    bronze/
-    gold/
-      __init__.py
-    silver/
-      __init__.py
-    utils/
-    spark_job.py
-    uploader.py
-  football_data_scraper.py
-  README.md
-  requirements.txt
-```
+### Requisitos previos
+- Proyecto GCP con APIs habilitadas: Dataproc, BigQuery, Cloud Storage, Cloud Composer.
+- Bucket GCS para almacenamiento de datos y scripts.
+- Cluster Dataproc creado.
+- Dataset en BigQuery.
 
-## Estructura de salida
+### Variables de entorno
+Configurar en Cloud Composer:
+- `GCP_PROJECT`: ID del proyecto GCP.
+- `GCP_REGION`: Región (ej. us-central1).
+- `DATAPROC_CLUSTER`: Nombre del cluster Dataproc.
+- `BQ_DATASET`: Nombre del dataset en BigQuery.
+- `GCS_BUCKET`: Nombre del bucket GCS.
+- `FOOTBALL_DATA_PROJECT_DIR`: /opt/airflow/project (para Composer).
 
-```text
-data/
+### Pasos de despliegue
+1. Subir el código a GCS: `gs://<bucket>/football_data/` (todo el paquete football_data con scripts en sus carpetas).
+2. Subir el paquete football_data a GCS o instalar en el cluster.
+3. Crear el DAG en Cloud Composer.
+4. Ejecutar el DAG: las tablas en BigQuery se crean automáticamente solo la primera vez (si no existen), optimizando costos. El pipeline procesa datos diariamente a las 2 AM y entrena un modelo de ML básico para predicciones de resultados de partidos.
+
+Las tablas en BigQuery estarán disponibles para ML y análisis.
   raw/
     football-data/
       _runs/
