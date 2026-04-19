@@ -124,6 +124,12 @@ dmypy.json
 *.log
 docker-compose.override.yml
 
+# Airflow local runtime
+logs/
+plugins/
+airflow.db
+standalone_admin_password.txt
+
 # Editor files
 *~
 

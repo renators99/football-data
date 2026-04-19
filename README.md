@@ -165,6 +165,65 @@ export FOOTBALL_DATA_GCS_PREFIX="lakehouse/football-data"
 spark-submit football_data_scraper.py
 ```
 
+## Despliegue con Docker y Airflow
+
+El repositorio incluye un despliegue local con Docker Compose para ejecutar el
+pipeline desde Airflow. La imagen de Airflow instala Java y las dependencias de
+`requirements.txt`, de modo que las tareas pueden levantar Spark en modo local.
+
+Servicios incluidos:
+
+- `postgres`: base de metadatos de Airflow.
+- `airflow-webserver`: UI de Airflow en `http://localhost:8080`.
+- `airflow-scheduler`: planificador que ejecuta el DAG.
+- `airflow-init`: inicializa la base de datos y crea el usuario admin.
+
+Arranque inicial:
+
+```bash
+docker compose up airflow-init
+docker compose up -d
+```
+
+Credenciales por defecto de Airflow:
+
+- Usuario: `airflow`
+- Password: `airflow`
+
+El DAG se llama `football_data_pipeline` y ejecuta las capas en este orden:
+
+1. `bronze_download_matches`
+2. `silver_normalize_matches`
+3. `gold_build_aggregates`
+
+El volumen del proyecto se monta en `/opt/airflow/project`, y la salida queda
+en:
+
+```text
+data/raw/bronze/matches
+data/raw/silver/matches
+data/raw/gold/team_season_table
+data/raw/gold/league_season_summary
+```
+
+Puedes ajustar la corrida con variables de entorno antes de iniciar Compose:
+
+```bash
+export FOOTBALL_DATA_START_YEAR=2020
+export FOOTBALL_DATA_PARTITIONS=4
+export FOOTBALL_DATA_LEAGUE_CODES="E0=england_premier_league,SP1=spain_la_liga"
+docker compose up -d --build
+```
+
+En PowerShell:
+
+```powershell
+$env:FOOTBALL_DATA_START_YEAR = "2020"
+$env:FOOTBALL_DATA_PARTITIONS = "4"
+$env:FOOTBALL_DATA_LEAGUE_CODES = "E0=england_premier_league,SP1=spain_la_liga"
+docker compose up -d --build
+```
+
 ## Programación diaria
 
 Puedes programar `football_data_scraper.py` en Dataproc Serverless u otro
