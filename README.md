@@ -26,6 +26,22 @@ Funciones principales:
 - `football_data.silver.run_silver_layer`
 - `football_data.gold.run_gold_layer`
 
+## Despliegue en Local
+
+Para desarrollo o pruebas locales:
+
+1. **Requisitos**: Docker, Docker Compose.
+
+2. **Levantar servicios**: Ejecuta `docker-compose up -d` para iniciar Airflow y Postgres.
+
+3. **Acceder a Airflow**: Ve a http://localhost:8080 (usuario: airflow, contraseña: airflow).
+
+4. **Configurar variables**: En Airflow UI > Admin > Variables, agrega las necesarias (FOOTBALL_DATA_*).
+
+5. **Ejecutar DAG**: Activa `football_data_pipeline_local` y ejecuta. Procesa datos localmente con PySpark.
+
+Nota: Para ML, ajusta `run_ml.py` para usar datos locales en lugar de BigQuery.
+
 ## Despliegue en Google Cloud Platform (GCP)
 
 ### Requisitos previos
